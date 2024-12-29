@@ -1,4 +1,4 @@
-[YUNet](https://link.springer.com/article/10.1007/s11633-023-1423-y) implementation with using PyTorch
+[YUNet](https://link.springer.com/article/10.1007/s11633-023-1423-y) Face and 5 Point Landmark Detection implementation using PyTorch
 
 ### Installation
 
