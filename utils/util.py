@@ -916,6 +916,9 @@ class ComputeLoss:
 
 
 class NMS:
+    def __init__(self, conf_threshold=0.001):
+        self.conf_threshold = conf_threshold
+
     def __call__(self, outputs):
         x_cls, x_box, x_obj, x_kpt = outputs
         assert len(x_cls) == len(x_box) == len(x_obj) == len(x_kpt)
@@ -932,7 +935,7 @@ class NMS:
 
     def __nms(self, cls, box, obj, kpt):
         scores, indices = torch.max(cls, 1)
-        valid_mask = obj * scores >= 0.001
+        valid_mask = obj * scores >= self.conf_threshold
 
         box = box[valid_mask]
         kpt = kpt[valid_mask]
@@ -940,10 +943,10 @@ class NMS:
         indices = indices[valid_mask]
 
         if indices.numel() == 0:
-            return box, indices, kpt
+            return torch.cat(tensors=(box, indices), dim=-1), kpt
         else:
             box, keep = self.__batched_nms(box, scores, indices)
-            return torch.cat((box, indices[keep][:, None]), dim=-1), kpt[keep]
+            return torch.cat(tensors=(box, indices[keep][:, None]), dim=-1), kpt[keep]
 
     @staticmethod
     def __batched_nms(boxes, scores, indices):
