@@ -232,6 +232,98 @@ def test(args, params, model=None):
     return f1, mean_ap, map50, m_rec, m_pre
 
 
+def demo(args):
+    import cv2
+    import numpy
+    model = torch.load(f='./weights/best.pt', map_location='cuda')
+    model = model['model'].float()
+    stride = int(max(model.strides))
+    model.eval()
+
+    nms = util.NMS(conf_threshold=0.4)
+
+    camera = cv2.VideoCapture(0)
+    # Check if camera opened successfully
+    if not camera.isOpened():
+        print("Error opening video stream or file")
+    # Read until video is completed
+    while camera.isOpened():
+        # Capture frame-by-frame
+        success, frame = camera.read()
+        if success:
+            image = frame.copy()
+            shape = image.shape[:2]  # current shape [height, width]
+            r = min(1.0, args.input_size / shape[0], args.input_size / shape[1])
+            pad = int(round(shape[1] * r)), int(round(shape[0] * r))
+            w = args.input_size - pad[0]
+            h = args.input_size - pad[1]
+            w = numpy.mod(w, stride)
+            h = numpy.mod(h, stride)
+            w /= 2
+            h /= 2
+            if shape[::-1] != pad:  # resize
+                image = cv2.resize(image,
+                                   dsize=pad,
+                                   interpolation=cv2.INTER_LINEAR)
+            top, bottom = int(round(h - 0.1)), int(round(h + 0.1))
+            left, right = int(round(w - 0.1)), int(round(w + 0.1))
+            image = cv2.copyMakeBorder(image,
+                                       top, bottom,
+                                       left, right,
+                                       cv2.BORDER_CONSTANT)  # add border
+            # Convert HWC to CHW, BGR to RGB
+            image = image.transpose((2, 0, 1))[::-1]
+            image = numpy.ascontiguousarray(image)
+            image = torch.from_numpy(image)
+            image = image.unsqueeze(dim=0)
+            image = image.float()
+            image = image.cuda()
+            # Inference
+            with torch.no_grad():
+                outputs = model(image)
+            # NMS
+            outputs = nms(outputs)
+            for output in outputs:
+
+                box_output = output[0]
+                kpt_output = output[1].reshape((-1, 5, 2))
+                if len(box_output) == 0 or len(kpt_output) == 0:
+                    continue
+
+                r = min(image.shape[2] / shape[0], image.shape[3] / shape[1])
+
+                box_output[:, [0, 2]] -= (image.shape[3] - shape[1] * r) / 2  # x padding
+                box_output[:, [1, 3]] -= (image.shape[2] - shape[0] * r) / 2  # y padding
+                box_output[:, :4] /= r
+
+                box_output[:, 0].clamp_(0, shape[1])  # x
+                box_output[:, 1].clamp_(0, shape[0])  # y
+                box_output[:, 2].clamp_(0, shape[1])  # x
+                box_output[:, 3].clamp_(0, shape[0])  # y
+
+                kpt_output[..., 0] -= (image.shape[3] - shape[1] * r) / 2  # x padding
+                kpt_output[..., 1] -= (image.shape[2] - shape[0] * r) / 2  # y padding
+                kpt_output[..., 0] /= r
+                kpt_output[..., 1] /= r
+                kpt_output[..., 0].clamp_(0, shape[1])  # x
+                kpt_output[..., 1].clamp_(0, shape[0])  # y
+
+                box_output = box_output.cpu().numpy()
+                kpt_output = kpt_output.cpu().numpy()
+
+                for box, kpt in zip(box_output, kpt_output):
+                    x1, y1, x2, y2 = list(map(int, box[:4]))
+                    cv2.rectangle(frame,
+                                  pt1=(x1, y1), pt2=(x2, y2), color=(0, 255, 0), thickness=2)
+                    for i in kpt:
+                        cv2.circle(frame,
+                                   center=(int(i[0]), int(i[1])),
+                                   radius=2, color=(0, 0, 255), thickness=-1, lineType=cv2.LINE_AA)
+
+            cv2.imshow('Frame', frame)
+            cv2.waitKey(0)
+
+
 def profile(args):
     import thop
     shape = (1, 3, args.input_size, args.input_size)
@@ -258,6 +350,7 @@ def main():
     parser.add_argument('--epochs', default=600, type=int)
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
+    parser.add_argument('--demo', action='store_true')
 
     args = parser.parse_args()
 
@@ -285,6 +378,8 @@ def main():
         train(args, params)
     if args.test:
         test(args, params)
+    if args.demo:
+        demo(args)
 
 
 if __name__ == "__main__":
